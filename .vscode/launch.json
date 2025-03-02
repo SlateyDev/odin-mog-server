@@ -1,0 +1,72 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "compounds": [
+        {
+            "name": "Launch - Debug",
+            "configurations": [
+                "game-server - Debug",
+                "game-client - Debug",
+            ],
+        },
+        {
+            "name": "Launch - Release",
+            "configurations": [
+                "game-server - Release",
+                "game-client - Release",
+            ],
+        },
+    ],
+    "configurations": [
+        {
+            "name": "game-server - Debug",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "preLaunchTask": "game-server: build debug",
+            "program": "${workspaceFolder}/build/debug/game-server.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "internalConsoleOptions": "openOnSessionStart",
+        },
+        {
+            "name": "game-client - Debug",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "preLaunchTask": "game-client: build debug",
+            "program": "${workspaceFolder}/build/debug/game-client.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "internalConsoleOptions": "openOnSessionStart",
+        },
+        {
+            "name": "game-server - Release",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "preLaunchTask": "game-server: build release",
+            "program": "${workspaceFolder}/build/release/game-server.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "internalConsoleOptions": "openOnSessionStart",
+        },
+        {
+            "name": "game-client - Release",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "preLaunchTask": "game-client: build release",
+            "program": "${workspaceFolder}/build/release/game-client.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "console": "internalConsole",
+            "internalConsoleOptions": "openOnSessionStart",
+        },
+    ],
+}
