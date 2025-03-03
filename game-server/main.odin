@@ -17,16 +17,20 @@ main :: proc() {
 
     i := &big.Int{}
     salt := &srp6.Salt{}
-    verifier := &srp6.Verifier{}
+    verifier := srp6.Verifier{5,10}
     N := &big.Int{}
     g := &big.Int{}
     k := &big.Int{}
 
     defer big.destroy(i, N, g, k)
 
-    big.string_to_int(N, srp6.bnet_SRP6v2Base_N)
+    big.string_to_int(N, srp6.bnet_SRP6v2Base_N, 16)
     big.int_set_from_integer(g, srp6.bnet_SRP6v2Base_g)
-    srp6.init(i, salt, verifier, N, g, k)
+    err := srp6.init(i, salt, verifier, N, g, k)
+    // _,_,err := srp6.CreateRegistration("username", "password")
+    if err != .Okay {
+        fmt.println(err)
+    }
 
     start_server()
 }

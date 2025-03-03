@@ -1,9 +1,12 @@
 package srp6
 
+import "core:crypto/hash"
+import "core:fmt"
 import "core:math/big"
 
-SALT_LENGTH :: 32
-Salt :: [SALT_LENGTH]u8
+SALT_LENGTH_BYTES :: 32
+SALT_LENGTH_BITS :: SALT_LENGTH_BYTES * 8
+Salt :: [SALT_LENGTH_BYTES]u8
 Verifier :: []u8
 
 grunt_SRP6_N :: "894B645E89E1535BBDAD5B8B290650530801B18EBFBF5E8FAB3C82872A3E9BB7"
@@ -19,34 +22,89 @@ s : ^Salt
 I : ^big.Int
 b : ^big.Int
 B : ^big.Int
-v : ^Verifier
+v : ^big.Int
 
-init :: proc(i : ^big.Int, salt : ^Salt, verifier : ^Verifier, N : ^big.Int, g : ^big.Int, k : ^big.Int) -> (err: big.Error) {
+init :: proc(i : ^big.Int, salt : ^Salt, verifier : Verifier, N : ^big.Int, g : ^big.Int, k : ^big.Int) -> (err: big.Error) {
     s = salt
     I = i
     b = CalculatePrivateB(N) or_return
-    v = verifier
+    big.int_from_bytes_little(v, verifier) or_return
     B = CalculatePublicB(N, g, k) or_return
+
+    fmt.println("I: ", big.int_itoa_string(I))
+    fmt.println("b: ", big.int_itoa_string(b))
+    fmt.println("v: ", big.int_itoa_string(v))
+    fmt.println("B: ", big.int_itoa_string(B))
     return
 }
 
 deinit :: proc() {
-    big.destroy(I, b, B)
+    big.destroy(I, b, B, v)
 }
 
-CalculatePrivateB :: proc(N: ^big.Int) -> (val: ^big.Int, err: big.Error) {
-    val = &big.Int {}
+CalculatePrivateB :: proc(N: ^big.Int) -> (ret_b: ^big.Int, err: big.Error) {
+    ret_b = &big.Int {}
     bits := big.count_bits(N) or_return
-    big.int_random(val, bits) or_return
+    big.int_random(ret_b, bits) or_return
     temp := &big.Int {}
     defer big.destroy(temp)
-    big.sub(temp, N, 1)
-    big.int_mod(val, val, temp) or_return
+    big.sub(temp, N, 1) or_return
+    big.int_mod(ret_b, ret_b, temp) or_return
+
+    fmt.println(big.int_itoa_string(ret_b))
     return
 }
 
-CalculatePublicB :: proc(N: ^big.Int, g: ^big.Int, k: ^big.Int) -> (val: ^big.Int, err: big.Error) {
-    val = &big.Int {}
+CalculatePublicB :: proc(N: ^big.Int, g: ^big.Int, k: ^big.Int) -> (ret_B: ^big.Int, err: big.Error) {
+    ret_B = &big.Int {}
+    temp := &big.Int {}
+    defer big.destroy(temp)
+    big.internal_powmod(temp, g, b, N) or_return
+    temp2 := &big.Int {}
+    defer big.destroy(temp2)
+    big.mul(temp2, v, k) or_return
+    big.add(temp, temp, temp2) or_return
+    big.mod(ret_B, temp, N) or_return
 //     return (g.ModExp(b, N) + (v * k)) % N;
+    return
+}
+
+
+CalculateX :: proc(username: string, password: string, salt: Salt) {
+
+}
+
+CreateRegistration :: proc(username: string, password: string) -> (salt: Salt, verifier: Verifier, err: big.Error) {
+    temp_salt := &big.Int {}
+    temp_verifier := &big.Int {}
+    temp_N := &big.Int {}
+    temp_g := &big.Int {}
+    defer big.destroy(temp_salt, temp_verifier, temp_N, temp_g)
+
+    big.int_random(temp_salt, SALT_LENGTH_BITS) or_return
+
+    big.string_to_int(temp_N, grunt_SRP6_N, 16) or_return
+    big.int_set_from_integer(temp_g, grunt_SRP6_g) or_return
+
+    sha_context := hash.Context {}
+    hash.init(&sha_context, .Insecure_SHA1)
+
+    un := transmute([]byte)username
+    pw := transmute([]byte)password
+    salt_bytes_size := big.int_to_bytes_size(temp_salt) or_return
+    salt_bytes := make([]byte, salt_bytes_size)
+    defer delete(salt_bytes)
+    big.int_to_bytes_little(temp_salt, salt_bytes) or_return
+
+    data := make([]byte, salt_bytes_size + len(un) + len(pw) + 1)
+    defer delete(data)
+    copy_slice(data[0:], salt_bytes)
+    copy_slice(data[salt_bytes_size:], un)
+    copy_slice(data[salt_bytes_size + len(un):], transmute([]byte)(string(":")))
+    copy_slice(data[salt_bytes_size + len(un) + 1:], pw)
+    hash_result := hash.hash_bytes(.Insecure_SHA1, data)
+
+    fmt.println(hash_result)
+
     return
 }
