@@ -105,6 +105,6 @@ People{id = 1, number = 3, big_number = 1.240, name = test}
 OK
 ```
 
-`db_select` & `db_inser` are obviously very opinionated, main call is `db_execute :: proc(cmd: string, args: ..any)` which does cmd preparing and bind argument insertion for you
+`db_select` & `db_insert` are obviously very opinionated, main call is `db_execute :: proc(cmd: string, args: ..any)` which does cmd preparing and bind argument insertion for you
 
 still need to test multiple row result usage out

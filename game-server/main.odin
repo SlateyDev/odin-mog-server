@@ -11,43 +11,7 @@ main :: proc() {
     sqlite.db_check(sqlite.db_init("test.db"))
     defer sqlite.db_check(sqlite.db_destroy())
 
-    f, err := os.open("migrations")
-    defer os.close(f)
-
-    if err != os.ERROR_NONE {
-        fmt.println("Could not open migrations folder for reading", err)
-        os.exit(1)
-    }
-
-    fis: []os.File_Info
-    defer os.file_info_slice_delete(fis)
-
-    fis, err = os.read_dir(f, -1)
-    if err != os.ERROR_NONE {
-        fmt.println("Could not read migrations folder", err)
-        os.exit(2)
-    }
-
-    for fi in fis {
-		_, name := filepath.split(fi.fullpath)
-        if filepath.ext(fi.fullpath) != ".sql" do continue
-
-		if fi.is_dir {
-			fmt.printfln("%v (directory)", name)
-		} else {
-			fmt.printfln("%v (%v bytes)", name, fi.size)
-
-            data, _ := os.read_entire_file(fi.fullpath)
-            defer delete(data)
-        
-            it := string(data)
-            for statement in strings.split_by_byte_iterator(&it, ';') {
-                fmt.println("[STATEMENT]: ", statement)
-                fmt.println()
-            //     sqlite.db_check(sqlite.db_execute_simple(statement))
-            }
-        }
-	}
+    sqlite.db_check(do_migrations())
 
     en.initialize()
     defer en.deinitialize()
@@ -77,4 +41,69 @@ main :: proc() {
             }
         }
     }
+}
+
+do_migrations :: proc() -> (err : sqlite.Result_Code) {
+    f, file_error := os.open("migrations")
+    defer os.close(f)
+
+    if file_error != os.ERROR_NONE {
+        fmt.println("Could not open migrations folder for reading", err)
+        os.exit(1)
+    }
+
+    fis: []os.File_Info
+    defer os.file_info_slice_delete(fis)
+
+    fis, file_error = os.read_dir(f, -1)
+    if file_error != os.ERROR_NONE {
+        fmt.println("Could not read migrations folder", err)
+        os.exit(2)
+    }
+
+    fmt.println("Starting DB Migrations")
+    db_execute_statements(`
+        CREATE TABLE IF NOT EXISTS _migrations (
+        name VARCHAR(100) PRIMARY KEY,
+        datetime default current_timestamp
+    );`) or_return
+
+    for fi in fis {
+		_, name := filepath.split(fi.fullpath)
+        if filepath.ext(fi.fullpath) != ".sql" do continue
+
+		if fi.is_dir {
+			// fmt.printfln("%v (directory)", name)
+		} else {
+			fmt.printf("%v (%v bytes) - ", name, fi.size)
+
+            stmt := sqlite.db_cache_prepare("SELECT 1 FROM _migrations WHERE name = ?1") or_return
+            sqlite.db_bind(stmt, name) or_return
+            result := sqlite.step(stmt)
+            if result == .DONE {
+                data, _ := os.read_entire_file(fi.fullpath)
+                defer delete(data)
+    
+                db_execute_statements(string(data)) or_return
+    
+                sqlite.db_execute("INSERT INTO _migrations (name) VALUES (?1)", name) or_return
+                fmt.println("Migrated!")
+            } else if result != .ROW {
+                return result
+            } else {
+                fmt.println("Exists. Skipping")
+            }
+        }
+	}
+
+    return
+}
+
+db_execute_statements :: proc(statements : string) -> (err : sqlite.Result_Code) {
+    it := statements
+    for statement in strings.split_by_byte_iterator(&it, ';') {
+        if len(strings.trim_space(statement)) == 0 do continue
+        sqlite.db_execute_simple(statement) or_return
+    }
+    return
 }
