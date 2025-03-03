@@ -2,10 +2,12 @@ package main
 
 import "../sqlite"
 import "core:fmt"
+import "core:math/big"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
-import en "vendor:ENet"
+import enet "vendor:ENet"
+import "srp6"
 
 main :: proc() {
     sqlite.db_check(sqlite.db_init("test.db"))
@@ -13,34 +15,20 @@ main :: proc() {
 
     sqlite.db_check(do_migrations())
 
-    en.initialize()
-    defer en.deinitialize()
+    i := &big.Int{}
+    salt := &srp6.Salt{}
+    verifier := &srp6.Verifier{}
+    N := &big.Int{}
+    g := &big.Int{}
+    k := &big.Int{}
 
-    event: en.Event
+    defer big.destroy(i, N, g, k)
 
-    server := en.host_create(&{en.HOST_ANY, 21070}, 4, 4, 0, 0)
-    if server == nil {
-        fmt.println("Couldn't create socket!")
-    }
-    defer en.host_destroy(server)
+    big.string_to_int(N, srp6.bnet_SRP6v2Base_N)
+    big.int_set_from_integer(g, srp6.bnet_SRP6v2Base_g)
+    srp6.init(i, salt, verifier, N, g, k)
 
-    for true {
-        for en.host_service(server, &event, 1000) > 0 {
-            #partial switch event.type {
-            case .CONNECT:
-                fmt.println("Incomming connection!")
-            case .RECEIVE:
-                data := cast([^]u32)event.packet.data
-                // value := cast(u32)data^
-                values := raw_data(data[0:2])
-                array := []u32 {values[0], values[1], values[2]}
-                data_len := event.packet.dataLength
-
-                fmt.println("Data received", array, "of size", data_len)
-                en.peer_disconnect(event.peer, 42)
-            }
-        }
-    }
+    start_server()
 }
 
 do_migrations :: proc() -> (err : sqlite.Result_Code) {
@@ -89,6 +77,7 @@ do_migrations :: proc() -> (err : sqlite.Result_Code) {
                 sqlite.db_execute("INSERT INTO _migrations (name) VALUES (?1)", name) or_return
                 fmt.println("Migrated!")
             } else if result != .ROW {
+                fmt.println("ERROR!")
                 return result
             } else {
                 fmt.println("Exists. Skipping")
@@ -106,4 +95,35 @@ db_execute_statements :: proc(statements : string) -> (err : sqlite.Result_Code)
         sqlite.db_execute_simple(statement) or_return
     }
     return
+}
+
+start_server :: proc() {
+    enet.initialize()
+    defer enet.deinitialize()
+
+    event: enet.Event
+
+    server := enet.host_create(&{enet.HOST_ANY, 21070}, 4, 4, 0, 0)
+    if server == nil {
+        fmt.println("Couldn't create socket!")
+    }
+    defer enet.host_destroy(server)
+
+    for true {
+        for enet.host_service(server, &event, 1000) > 0 {
+            #partial switch event.type {
+            case .CONNECT:
+                fmt.println("Incomming connection!")
+            case .RECEIVE:
+                data := cast([^]u32)event.packet.data
+                // value := cast(u32)data^
+                values := raw_data(data[0:2])
+                array := []u32 {values[0], values[1], values[2]}
+                data_len := event.packet.dataLength
+
+                fmt.println("Data received", array, "of size", data_len)
+                enet.peer_disconnect(event.peer, 42)
+            }
+        }
+    }
 }

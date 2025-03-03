@@ -1,11 +1,27 @@
-CREATE TABLE IF NOT EXISTS some_table (
+-- sqlite
+CREATE TABLE IF NOT EXISTS account (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    test VARCHAR(30)
+    username VARCHAR(45) NOT NULL UNIQUE,
+    session_key VARCHAR(45),
+    password_hash VARCHAR(255),
+    verifier VARCHAR(255),
+    salt VARCHAR(255),
+    access_level INTEGER NOT NULL DEFAULT 0,
+    banned INTEGER NOT NULL DEFAULT 0,
+    last_ip VARCHAR(15),
+    last_login timestamp
 );
-INSERT INTO some_table (test) VALUES ('BLAH');
-CREATE TABLE IF NOT EXISTS mytest (
+
+CREATE TABLE IF NOT EXISTS ip_banned (
+    ip VARCHAR(15) PRIMARY KEY NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS realm (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    number INTEGER DEFAULT 0,
-    big_number DECIMAL DEFAULT 0,
-    name VARCHAR(30)
-);
+    name VARCHAR(45) NOT NULL,
+    address VARCHAR(45) NOT NULL,
+    port INTEGER NOT NULL,
+    type INTEGER NOT NULL DEFAULT 0,
+    state INTEGER NOT NULL DEFAULT 0,
+    flags INTEGER NOT NULL DEFAULT 0
+)
