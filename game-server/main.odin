@@ -31,8 +31,9 @@ main :: proc() {
     if err != .Okay {
         fmt.println(err)
     }
+    srp6.deinit()
 
-    start_server()
+    // start_server()
 }
 
 do_migrations :: proc() -> (err : sqlite.Result_Code) {

@@ -25,11 +25,15 @@ B : ^big.Int
 v : ^big.Int
 
 init :: proc(i : ^big.Int, salt : ^Salt, verifier : Verifier, N : ^big.Int, g : ^big.Int, k : ^big.Int) -> (err: big.Error) {
+    b = new(big.Int)
+    B = new(big.Int)
+    v = new(big.Int)
+
     s = salt
     I = i
-    b = CalculatePrivateB(N) or_return
+    CalculatePrivateB(N) or_return
     big.int_from_bytes_little(v, verifier) or_return
-    B = CalculatePublicB(N, g, k) or_return
+    CalculatePublicB(N, g, k) or_return
 
     fmt.println("I: ", big.int_itoa_string(I))
     fmt.println("b: ", big.int_itoa_string(b))
@@ -40,23 +44,24 @@ init :: proc(i : ^big.Int, salt : ^Salt, verifier : Verifier, N : ^big.Int, g : 
 
 deinit :: proc() {
     big.destroy(I, b, B, v)
+    free(b)
+    free(B)
+    free(v)
 }
 
-CalculatePrivateB :: proc(N: ^big.Int) -> (ret_b: ^big.Int, err: big.Error) {
-    ret_b = &big.Int {}
+CalculatePrivateB :: proc(N: ^big.Int) -> (err: big.Error) {
     bits := big.count_bits(N) or_return
-    big.int_random(ret_b, bits) or_return
+    big.int_random(b, bits) or_return
     temp := &big.Int {}
     defer big.destroy(temp)
     big.sub(temp, N, 1) or_return
-    big.int_mod(ret_b, ret_b, temp) or_return
+    big.int_mod(b, b, temp) or_return
 
-    fmt.println(big.int_itoa_string(ret_b))
+    fmt.println(big.int_itoa_string(b))
     return
 }
 
-CalculatePublicB :: proc(N: ^big.Int, g: ^big.Int, k: ^big.Int) -> (ret_B: ^big.Int, err: big.Error) {
-    ret_B = &big.Int {}
+CalculatePublicB :: proc(N: ^big.Int, g: ^big.Int, k: ^big.Int) -> (err: big.Error) {
     temp := &big.Int {}
     defer big.destroy(temp)
     big.internal_powmod(temp, g, b, N) or_return
@@ -64,7 +69,7 @@ CalculatePublicB :: proc(N: ^big.Int, g: ^big.Int, k: ^big.Int) -> (ret_B: ^big.
     defer big.destroy(temp2)
     big.mul(temp2, v, k) or_return
     big.add(temp, temp, temp2) or_return
-    big.mod(ret_B, temp, N) or_return
+    big.mod(B, temp, N) or_return
 //     return (g.ModExp(b, N) + (v * k)) % N;
     return
 }
