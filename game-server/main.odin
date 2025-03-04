@@ -3,6 +3,7 @@ package main
 import "../sqlite"
 import "core:fmt"
 import "core:math/big"
+import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
@@ -10,6 +11,28 @@ import enet "vendor:ENet"
 import "srp6"
 
 main :: proc() {
+	when ODIN_DEBUG {
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		context.allocator = mem.tracking_allocator(&track)
+
+		defer {
+			if len(track.allocation_map) > 0 {
+				fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
+				for _, entry in track.allocation_map {
+					fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+				}
+			}
+			if len(track.bad_free_array) > 0 {
+				fmt.eprintf("=== %v incorrect frees: ===\n", len(track.bad_free_array))
+				for entry in track.bad_free_array {
+					fmt.eprintf("- %p @ %v\n", entry.memory, entry.location)
+				}
+			}
+			mem.tracking_allocator_destroy(&track)
+		}
+	}
+
     sqlite.db_check(sqlite.db_init("test.db"))
     defer sqlite.db_check(sqlite.db_destroy())
 
@@ -27,11 +50,15 @@ main :: proc() {
     big.string_to_int(N, srp6.bnet_SRP6v2Base_N, 16)
     big.int_set_from_integer(g, srp6.bnet_SRP6v2Base_g)
     err := srp6.init(i, salt, verifier, N, g, k)
-    // _,_,err := srp6.CreateRegistration("username", "password")
     if err != .Okay {
         fmt.println(err)
     }
     srp6.deinit()
+
+    _,_,err2 := srp6.CreateRegistration("scott", "password")
+    if err2 != .Okay {
+        fmt.println(err2)
+    }
 
     // start_server()
 }
