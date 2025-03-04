@@ -43,7 +43,7 @@ init :: proc(i : ^big.Int, salt : ^Salt, verifier : Verifier, N : ^big.Int, g : 
 }
 
 deinit :: proc() {
-    big.destroy(I, b, B, v)
+    big.destroy(b, B, v)
     free(b)
     free(B)
     free(v)
