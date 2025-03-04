@@ -83,7 +83,8 @@ db_cache_destroy :: proc() {
 	for _, stmt in db_cache {
 		finalize(stmt)
 	}
-    clear(&db_cache)
+    // clear(&db_cache)
+	delete_map(db_cache)
 }
 
 // simple execute -> no cache

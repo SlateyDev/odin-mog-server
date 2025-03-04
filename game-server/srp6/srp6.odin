@@ -46,10 +46,18 @@ init :: proc(
 	big.int_from_bytes_little(v, verifier) or_return
 	CalculatePublicB(N, g, k) or_return
 
-	fmt.println("I: ", big.int_itoa_string(I, 16))
-	fmt.println("b: ", big.int_itoa_string(b, 16))
-	fmt.println("v: ", big.int_itoa_string(v, 16))
-	fmt.println("B: ", big.int_itoa_string(B, 16))
+    string_I := big.int_itoa_string(I, 16) or_return
+    defer delete(string_I)
+    string_b := big.int_itoa_string(b, 16) or_return
+    defer delete(string_b)
+    string_v := big.int_itoa_string(v, 16) or_return
+    defer delete(string_v)
+    string_B := big.int_itoa_string(B, 16) or_return
+    defer delete(string_B)
+	fmt.println("I: ", string_I)
+	fmt.println("b: ", string_b)
+	fmt.println("v: ", string_v)
+	fmt.println("B: ", string_B)
 	return
 }
 
@@ -68,7 +76,10 @@ CalculatePrivateB :: proc(N: ^big.Int) -> (err: big.Error) {
 	big.sub(temp, N, 1) or_return
 	big.int_mod(b, b, temp) or_return
 
-	fmt.println(big.int_itoa_string(b))
+    string_b := big.int_itoa_string(b) or_return
+    defer delete(string_b)
+
+	fmt.println(string_b)
 	return
 }
 

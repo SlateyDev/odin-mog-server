@@ -35,6 +35,7 @@ main :: proc() {
 
     sqlite.db_check(sqlite.db_init("test.db"))
     defer sqlite.db_check(sqlite.db_destroy())
+    defer sqlite.db_cache_destroy()
 
     sqlite.db_check(do_migrations())
 
