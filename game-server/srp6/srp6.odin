@@ -97,10 +97,6 @@ CalculatePublicB :: proc(N: ^big.Int, g: ^big.Int, k: ^big.Int) -> (err: big.Err
 }
 
 
-CalculateX :: proc(username: string, password: string, salt: Salt) {
-
-}
-
 CreateRegistration :: proc(
 	username: string,
 	password: string,
@@ -179,4 +175,175 @@ PrintHexBytesLine :: proc(bytes: ^[]u8) {
         fmt.printf("%2X", i)
     }
     fmt.println()
+}
+
+srp6_context :: struct {
+	g: ^big.Int,
+	N: ^big.Int,
+	k: ^big.Int,
+	PublicA: ^big.Int,
+	PublicB: ^big.Int,
+	Salt: ^big.Int,
+	a: ^big.Int,
+}
+
+InitContext :: proc(ctx: ^srp6_context) -> (err: big.Error) {
+	ctx.g = new(big.Int)
+	ctx.N = new(big.Int)
+	ctx.k = new(big.Int)
+	ctx.PublicA = new(big.Int)
+	ctx.PublicB = new(big.Int)
+	ctx.Salt = new(big.Int)
+	ctx.a = new(big.Int)
+	return
+}
+
+DestroyContext :: proc(ctx: ^srp6_context) {
+	big.destroy(ctx.g)
+	big.destroy(ctx.N)
+	big.destroy(ctx.k)
+	big.destroy(ctx.PublicA)
+	big.destroy(ctx.PublicB)
+	big.destroy(ctx.Salt)
+	big.destroy(ctx.a)
+
+	free(ctx.g)
+	free(ctx.N)
+	free(ctx.k)
+	free(ctx.PublicA)
+	free(ctx.PublicB)
+	free(ctx.Salt)
+	free(ctx.a)
+}
+
+AuthLoginChallenge :: proc(ctx: ^srp6_context) -> (err: big.Error) {
+	big.int_random(ctx.a, SALT_LENGTH_BITS) or_return
+
+	big.string_to_int(ctx.N, grunt_SRP6_N, 16) or_return
+	big.int_set_from_integer(ctx.g, grunt_SRP6_g) or_return
+	big.internal_powmod(ctx.PublicA, ctx.g, ctx.a, ctx.N) or_return
+
+	// a_bytes_size := big.int_to_bytes_size(publicA) or_return
+	// a_bytes := make([]byte, a_bytes_size)
+	// defer delete(a_bytes)
+	// big.int_to_bytes_little(publicA, a_bytes) or_return
+
+// 	UDPTransmitter transmitter = UDPTransmitter.CreateObject();
+// 	transmitter.WriteUint16((UInt16)CMSG_AUTH_LOGON_CHALLENGE);      //opcode
+// 	transmitter.WriteUint16((UInt16)(9 + USERNAME.Length + PublicABytes.Length));    //packet_length
+// 	transmitter.WriteUint8(BUILD_MAJOR);
+// 	transmitter.WriteUint8(BUILD_MINOR);
+// 	transmitter.WriteUint8(BUILD_REVISION);
+// 	transmitter.WriteInt16(CLIENT_BUILD);
+// 	transmitter.WriteUint16((UInt16)USERNAME.Length);
+// 	transmitter.WriteFixedString(USERNAME);
+// 	transmitter.WriteUint16((UInt16)PublicABytes.Length);
+// 	transmitter.WriteFixedBlob(PublicABytes);
+// 	transmitter.SendTo(loginSocket, loginEndpoint);
+
+	return
+}
+
+AuthLoginProof :: proc(
+	ctx: ^srp6_context,
+	PublicB: ^big.Int,
+	Salt: ^big.Int,
+	Username: string,
+	Password: string,
+) -> (err: big.Error) {
+	big.copy(ctx.PublicB, PublicB)
+
+	// var u = new BigInteger(sha.ComputeHash(PublicA.ToByteArray().Concat(PublicB.ToByteArray()).ToArray()).Concat(new byte[] { 0 }).ToArray());
+	PublicA_byte_count := big.int_to_bytes_size(ctx.PublicA) or_return
+	PublicB_byte_count := big.int_to_bytes_size(ctx.PublicB) or_return
+
+	PublicA_bytes := make([]byte, PublicA_byte_count)
+	defer delete(PublicA_bytes)
+	PublicB_bytes := make([]byte, PublicB_byte_count)
+	defer delete(PublicB_bytes)
+
+	big.int_to_bytes_little(ctx.PublicA, PublicA_bytes) or_return
+	big.int_to_bytes_little(ctx.PublicB, PublicB_bytes) or_return
+
+	u_bytes := make([]byte, len(PublicA_bytes) + len(PublicB_bytes))
+	defer delete(u_bytes)
+	copy_slice(u_bytes[0:], PublicA_bytes)
+	copy_slice(u_bytes[len(PublicA_bytes):], PublicB_bytes)
+	u_hash := hash.hash_bytes(.SHA256, u_bytes)
+    defer delete(u_hash)
+
+	temp_u := &big.Int{}
+	defer big.destroy(temp_u)
+	big.int_from_bytes_little(temp_u, u_hash) or_return
+
+	// byte[] passwordHash = sha.ComputeHash(Encoding.ASCII.GetBytes(string.Format("{0}:{1}", USERNAME, PASSWORD.ToUpper())));
+	user_pass_bytes := make([]byte, len(Username) + len(Password) + 1)
+	defer delete(user_pass_bytes)
+	copy_slice(user_pass_bytes[0:], transmute([]byte)(Username))
+	copy_slice(user_pass_bytes[len(Username):], transmute([]byte)(string(":")))
+	copy_slice(user_pass_bytes[len(Username) + 1:], transmute([]byte)(Password))
+	passwordHash := hash.hash_bytes(.SHA256, user_pass_bytes)
+    defer delete(passwordHash)
+
+	// var x = new BigInteger(sha.ComputeHash(passwordHash.Concat(Salt.ToByteArray()).ToArray()).Concat(new byte[] { 0 }).ToArray());
+	salt_bytes_size := big.int_to_bytes_size(Salt) or_return
+	salt_bytes := make([]byte, salt_bytes_size)
+	defer delete(salt_bytes)
+	big.int_to_bytes_little(Salt, salt_bytes) or_return
+
+	temp_x := &big.Int{}
+	defer big.destroy(temp_x)
+    passhash_salt_bytes := make([]byte, len(passwordHash) + salt_bytes_size)
+    defer delete(passhash_salt_bytes)
+    copy_slice(passhash_salt_bytes[0:], passwordHash)
+    copy_slice(passhash_salt_bytes[len(passwordHash):], salt_bytes)
+    x_hash := hash.hash_bytes(.SHA256, passhash_salt_bytes)
+    defer delete(x_hash)
+	big.int_from_bytes_little(temp_x, x_hash) or_return
+	
+	// var S = BigInteger.ModPow(PublicB - k * BigInteger.ModPow(g, x, N), (a + u * x), N);
+	tempBase := &big.Int{}
+	defer big.destroy(tempBase)
+	big.internal_powmod(tempBase, ctx.g, temp_x, ctx.N) or_return
+	big.mul(tempBase, tempBase, ctx.k) or_return
+	big.sub(tempBase, ctx.PublicB, tempBase) or_return
+
+	tempPow := &big.Int{}
+	defer big.destroy(tempPow)
+	big.mul(tempPow, temp_u, temp_x) or_return
+	big.add(tempPow, ctx.a, tempPow) or_return
+
+	tempS := &big.Int{}
+	defer big.destroy(tempS)
+	big.internal_powmod(tempS, tempBase, tempPow, ctx.N) or_return
+
+	tempS_bytes_size := big.int_to_bytes_size(tempS) or_return
+	tempS_bytes := make([]byte, tempS_bytes_size)
+	defer delete(tempS_bytes)
+	big.int_to_bytes_little(tempS, tempS_bytes) or_return
+
+	// var sessionkey = sha.ComputeHash(S.ToByteArray());
+	sessionKey := hash.hash(.SHA256, tempS_bytes)
+	defer delete(sessionKey)
+
+	// var M1 = sha.ComputeHash(PublicA.ToByteArray().Concat(PublicB.ToByteArray()).Concat(sessionkey).ToArray());
+
+	// using (MemoryStream ms = new MemoryStream()) {
+	// 	using(BinaryWriter bw = new BinaryWriter(ms)) {
+	// 		bw.Write(M1, 0, M1.Length);
+	// 	}
+
+	// 	byte[] messageBody;
+	// 	messageBody = ms.ToArray();
+
+	// 	using (MemoryStream ms1 = new MemoryStream()) {
+	// 		UDPTransmitter transmitter = UDPTransmitter.CreateObject();
+	// 		transmitter.WriteUint16(CMSG_AUTH_LOGON_PROOF);
+	// 		transmitter.WriteUint16((UInt16)messageBody.Length);
+	// 		transmitter.WriteFixedBlob(messageBody);
+	// 		transmitter.SendTo(loginSocket, loginEndpoint);
+	// 	}
+	// }
+
+	return
 }
