@@ -73,7 +73,7 @@ main :: proc() {
 	fmt.print("Server SessionKey: ")
 	PrintHexBytesLine(&server_ctx.SessionKey)
 
-	// start_server()
+	start_server()
 }
 
 PrintHexBytesLine :: proc(bytes: ^[]u8) {
@@ -169,13 +169,15 @@ start_server :: proc() {
 			case .CONNECT:
 				fmt.println("Incomming connection!")
 			case .RECEIVE:
-				data := cast([^]u32)event.packet.data
+				data := event.packet.data[:event.packet.dataLength]
 				// value := cast(u32)data^
-				values := raw_data(data[0:2])
-				array := []u32{values[0], values[1], values[2]}
-				data_len := event.packet.dataLength
+				// values := raw_data(data[0:event.packet.dataLength - 1])
+				fmt.println(event.packet.dataLength, " bytes received")
+                PrintHexBytesLine(&data)
+				// array := []u8{data[0], data[1], data[2]}
+				// data_len := event.packet.dataLength
 
-				fmt.println("Data received", array, "of size", data_len)
+				// fmt.println("Data received", array, "of size", data_len)
 				enet.peer_disconnect(event.peer, 42)
 			}
 		}

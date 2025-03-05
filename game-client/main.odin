@@ -1,11 +1,35 @@
 package main
 
 import "../srp6"
+import "core:crypto/hash"
 import "core:fmt"
 import "core:math/big"
+import "core:mem"
 import enet "vendor:ENet"
 
 main :: proc() {
+	when ODIN_DEBUG {
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		context.allocator = mem.tracking_allocator(&track)
+
+		defer {
+			if len(track.allocation_map) > 0 {
+				fmt.eprintf("=== %v allocations not freed: ===\n", len(track.allocation_map))
+				for _, entry in track.allocation_map {
+					fmt.eprintf("- %v bytes @ %v\n", entry.size, entry.location)
+				}
+			}
+			if len(track.bad_free_array) > 0 {
+				fmt.eprintf("=== %v incorrect frees: ===\n", len(track.bad_free_array))
+				for entry in track.bad_free_array {
+					fmt.eprintf("- %p @ %v\n", entry.memory, entry.location)
+				}
+			}
+			mem.tracking_allocator_destroy(&track)
+		}
+	}
+
 	enet.initialize()
 	defer enet.deinitialize()
 
@@ -33,40 +57,71 @@ main :: proc() {
 
 	fmt.println("Establishing connection!")
 
+	client_srp_context := srp6.srp6_context{}
+	srp6.InitContext(&client_srp_context, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
+	defer srp6.DestroyContext(&client_srp_context)
+
 	if enet.host_service(client, &event, 1000) > 0 && event.type == .CONNECT {
 		fmt.println("It works!")
-		data := []u32{1, 2, 3}
-		fmt.println(data)
-		packet := enet.packet_create(&data[0], size_of(u32) * 3, {.RELIABLE})
-		enet.peer_send(peer, 0, packet)
+
+		SendClientLoginChallenge(peer, &client_srp_context, "scott")
+
 		enet.host_flush(client)
 	} else {
 		fmt.println("Nay!")
 	}
 }
 
-//TODO: Move this into a separate library that uses this srp6 to form message, this is the first message sent by the client
-SendClientLoginChallenge :: proc(ctx: ^srp6.srp6_context, username: string) -> (err: big.Error) {
+MessageHeader :: struct {
+	opcode: u16,
+	length: u16,
+}
+
+LoginChallengeHeader :: struct {
+	using header: MessageHeader,
+	major: u8,
+	minor: u8,
+	revision: u8,
+	build: u16,
+	username_len: u16,
+	publicA_len: u16,
+}
+
+SendClientLoginChallenge :: proc(peer: ^enet.Peer, ctx: ^srp6.srp6_context, username: string) -> (err: big.Error) {
 	srp6.ClientLoginChallenge(ctx) or_return
 
-	// UDPTransmitter transmitter = UDPTransmitter.CreateObject();
-	// transmitter.WriteUint16((UInt16)CMSG_AUTH_LOGON_CHALLENGE);      //opcode
-	// transmitter.WriteUint16((UInt16)(9 + USERNAME.Length + PublicABytes.Length));    //packet_length
-	// transmitter.WriteUint8(BUILD_MAJOR);
-	// transmitter.WriteUint8(BUILD_MINOR);
-	// transmitter.WriteUint8(BUILD_REVISION);
-	// transmitter.WriteInt16(CLIENT_BUILD);
-	// transmitter.WriteUint16((UInt16)USERNAME.Length);
-	// transmitter.WriteFixedString(USERNAME);
-	// transmitter.WriteUint16((UInt16)PublicABytes.Length);
-	// transmitter.WriteFixedBlob(PublicABytes);
-	// transmitter.SendTo(loginSocket, loginEndpoint);
+	publicA_bytes_size := big.int_to_bytes_size(ctx.PublicA) or_return
+	publicA_bytes := make([]byte, publicA_bytes_size)
+	defer delete(publicA_bytes)
+	big.int_to_bytes_little(ctx.PublicA, publicA_bytes) or_return
+	
+	data_size := size_of(LoginChallengeHeader) + len(username) + publicA_bytes_size
+	data := make([]u8, data_size)
+	defer delete(data)
+
+	message := LoginChallengeHeader{
+		opcode = 12,
+		length = u16(size_of(LoginChallengeHeader) + len(username) + publicA_bytes_size),
+		major = 4,
+		minor = 5,
+		revision = 6,
+		build = 7,
+		username_len = u16(len(username)),
+		publicA_len = u16(publicA_bytes_size),
+	}
+
+	mem.copy(&data[0], &message, size_of(message))
+	mem.copy(&data[size_of(message)], raw_data(username), len(username))
+	mem.copy(&data[size_of(message) + len(username)], raw_data(publicA_bytes), publicA_bytes_size)
+
+	packet := enet.packet_create(&data[0], len(data), {.RELIABLE})
+	enet.peer_send(peer, 0, packet)
 
 	return
 }
 
-//TODO: Move this into a separate library that uses this srp6 to form message, this is the first message sent by the client
 SendClientLoginProof :: proc(
+	peer: ^enet.Peer,
 	ctx: ^srp6.srp6_context,
 	public_b: ^big.Int,
 	salt: ^big.Int,
@@ -76,24 +131,41 @@ SendClientLoginProof :: proc(
 	err: big.Error,
 ) {
 	srp6.ClientLoginProof(ctx, public_b, salt, username, password) or_return
-	// var M1 = sha.ComputeHash(PublicA.ToByteArray().Concat(PublicB.ToByteArray()).Concat(sessionkey).ToArray());
 
-	// using (MemoryStream ms = new MemoryStream()) {
-	// 	using(BinaryWriter bw = new BinaryWriter(ms)) {
-	// 		bw.Write(M1, 0, M1.Length);
-	// 	}
+	PublicA_bytes_size := big.int_to_bytes_size(ctx.PublicA) or_return
+	PublicB_bytes_size := big.int_to_bytes_size(ctx.PublicB) or_return
 
-	// 	byte[] messageBody;
-	// 	messageBody = ms.ToArray();
+	PublicA_bytes := make([]u8, PublicA_bytes_size)
+	defer delete(PublicA_bytes)
+	big.int_to_bytes_little(ctx.PublicA, PublicA_bytes)
 
-	// 	using (MemoryStream ms1 = new MemoryStream()) {
-	// 		UDPTransmitter transmitter = UDPTransmitter.CreateObject();
-	// 		transmitter.WriteUint16(CMSG_AUTH_LOGON_PROOF);
-	// 		transmitter.WriteUint16((UInt16)messageBody.Length);
-	// 		transmitter.WriteFixedBlob(messageBody);
-	// 		transmitter.SendTo(loginSocket, loginEndpoint);
-	// 	}
-	// }
+	PublicB_bytes := make([]u8, PublicB_bytes_size)
+	defer delete(PublicB_bytes)
+	big.int_to_bytes_little(ctx.PublicB, PublicB_bytes)
+
+	hash_data := make([]u8, PublicA_bytes_size + PublicB_bytes_size + len(ctx.SessionKey))
+	defer delete(hash_data)
+	copy(hash_data[0:], PublicA_bytes)
+	copy(hash_data[PublicA_bytes_size:], PublicB_bytes)
+	copy(hash_data[PublicA_bytes_size + PublicB_bytes_size:], ctx.SessionKey)
+
+	M1 := hash.hash(.SHA256, hash_data)
+	defer delete(M1)
+
+	data_size := size_of(MessageHeader) + len(M1)
+	data := make([]u8, data_size)
+	defer delete(data)
+
+	message := MessageHeader{
+		opcode = 12,
+		length = u16(size_of(MessageHeader) + len(M1)),
+	}
+
+	mem.copy(&data[0], &message, size_of(message))
+	mem.copy(&data[size_of(message)], raw_data(M1), len(M1))
+
+	packet := enet.packet_create(&data[0], len(data), {.RELIABLE})
+	enet.peer_send(peer, 0, packet)
 
 	return
 }
