@@ -2,7 +2,6 @@ package main
 
 import "../sqlite"
 import "core:fmt"
-import "core:math/big"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
@@ -39,29 +38,43 @@ main :: proc() {
 
     sqlite.db_check(do_migrations())
 
-    i := &big.Int{}
-    salt := &srp6.Salt{}
-    verifier := srp6.Verifier{5,10}
-    N := &big.Int{}
-    g := &big.Int{}
-    k := &big.Int{}
-
-    defer big.destroy(i, N, g, k)
-
-    big.string_to_int(N, srp6.bnet_SRP6v2Base_N, 16)
-    big.int_set_from_integer(g, srp6.bnet_SRP6v2Base_g)
-    err := srp6.init(i, salt, verifier, N, g, k)
+    registration_ctx := srp6.srp6_context{}
+    srp6.InitContext(&registration_ctx, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
+    defer srp6.DestroyContext(&registration_ctx)
+    err := srp6.CreateRegistration(&registration_ctx, "scott", "password")
     if err != .Okay {
         fmt.println(err)
     }
-    srp6.deinit()
 
-    _,_,err2 := srp6.CreateRegistration("scott", "password")
-    if err2 != .Okay {
-        fmt.println(err2)
-    }
+    //CLIENT/SERVER Test
+    client_ctx := srp6.srp6_context{}
+    server_ctx := srp6.srp6_context{}
+    srp6.InitContext(&client_ctx, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
+    defer srp6.DestroyContext(&client_ctx)
+    srp6.InitContext(&server_ctx, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
+    defer srp6.DestroyContext(&server_ctx)
+
+    // 1. Client Generates and Sends to server a Login Challenge. Would need to send the username also so server can look up salt and verifier to provide challenge response
+    srp6.ClientLoginChallenge(&client_ctx)
+    // 2. Server gets Salt and Verifier from db for user, for this test we use registration_ctx for its Salt and Verifier of the newly created user
+    srp6.ServerLoginChallenge(&server_ctx, client_ctx.PublicA, registration_ctx.Verifier)
+    // 3. Send Salt and PublicB to Client. Don't need to test this, it is just network traffic
+    // 4. Client uses PublicB and Salt to Generate and Send a Login Proof. This will also store a SessionKey in client_ctx
+    srp6.ClientLoginProof(&client_ctx, server_ctx.PublicB, registration_ctx.Salt, "scott", "password")
+    // 5. At this point client and server both have a session key which should match, if they do, authentication was successful
+    fmt.print("Client SessionKey: ")
+    PrintHexBytesLine(&client_ctx.SessionKey)
+    fmt.print("Server SessionKey: ")
+    PrintHexBytesLine(&server_ctx.SessionKey)
 
     // start_server()
+}
+
+PrintHexBytesLine :: proc(bytes: ^[]u8) {
+    for &i in bytes {
+        fmt.printf("%2X", i)
+    }
+    fmt.println()
 }
 
 do_migrations :: proc() -> (err : sqlite.Result_Code) {
