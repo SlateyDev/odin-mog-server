@@ -4,6 +4,7 @@ import "../common"
 import "../sqlite"
 import "../srp6"
 import "core:fmt"
+import "core:math/big"
 import "core:mem"
 import "core:os"
 import "core:path/filepath"
@@ -57,32 +58,52 @@ main :: proc() {
 		fmt.println(err)
 	}
 
-	//CLIENT/SERVER Test
-	client_ctx := srp6.srp6_context{}
-	server_ctx := srp6.srp6_context{}
-	srp6.InitContext(&client_ctx, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
-	defer srp6.DestroyContext(&client_ctx)
-	srp6.InitContext(&server_ctx, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
-	defer srp6.DestroyContext(&server_ctx)
+	verifier, _ := big.itoa(registration_ctx.Verifier, 16)
+	salt, _ := big.itoa(registration_ctx.Salt, 16)
+	sqlite.db_execute("DELETE FROM account WHERE username = ?1", "scott")
+	sqlite.db_execute("INSERT INTO account (username, verifier, salt) values (?1, ?2, ?3)", "scott", verifier, salt)
+	delete(verifier)
+	delete(salt)
 
-	// 1. Client Generates and Sends to server a Login Challenge. Would need to send the username also so server can look up salt and verifier to provide challenge response
-	srp6.ClientLoginChallenge(&client_ctx)
-	// 2. Server gets Salt and Verifier from db for user, for this test we use registration_ctx for its Salt and Verifier of the newly created user
-	srp6.ServerLoginChallenge(&server_ctx, client_ctx.PublicA, registration_ctx.Verifier)
-	// 3. Send Salt and PublicB to Client. Don't need to test this, it is just network traffic
-	// 4. Client uses PublicB and Salt to Generate and Send a Login Proof. This will also store a SessionKey in client_ctx
-	srp6.ClientLoginProof(
-		&client_ctx,
-		server_ctx.PublicB,
-		registration_ctx.Salt,
-		"scott",
-		"password",
-	)
-	// 5. At this point client and server both have a session key which should match, if they do, authentication was successful
-	fmt.print("Client SessionKey: ")
-	PrintHexBytesLine(&client_ctx.SessionKey)
-	fmt.print("Server SessionKey: ")
-	PrintHexBytesLine(&server_ctx.SessionKey)
+	AccountInfo :: struct {
+		id: i32,
+		username: string,
+		verifier: string,
+		salt: string,
+	}
+
+	account_data := AccountInfo{}
+
+	dberr := sqlite.db_select("FROM account where username = ?1", account_data, "scott")
+	fmt.println(dberr)
+	fmt.println(account_data)
+
+	// //CLIENT/SERVER Test
+	// client_ctx := srp6.srp6_context{}
+	// server_ctx := srp6.srp6_context{}
+	// srp6.InitContext(&client_ctx, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
+	// defer srp6.DestroyContext(&client_ctx)
+	// srp6.InitContext(&server_ctx, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
+	// defer srp6.DestroyContext(&server_ctx)
+
+	// // 1. Client Generates and Sends to server a Login Challenge. Would need to send the username also so server can look up salt and verifier to provide challenge response
+	// srp6.ClientLoginChallenge(&client_ctx)
+	// // 2. Server gets Salt and Verifier from db for user, for this test we use registration_ctx for its Salt and Verifier of the newly created user
+	// srp6.ServerLoginChallenge(&server_ctx, client_ctx.PublicA, registration_ctx.Verifier)
+	// // 3. Send Salt and PublicB to Client. Don't need to test this, it is just network traffic
+	// // 4. Client uses PublicB and Salt to Generate and Send a Login Proof. This will also store a SessionKey in client_ctx
+	// srp6.ClientLoginProof(
+	// 	&client_ctx,
+	// 	server_ctx.PublicB,
+	// 	registration_ctx.Salt,
+	// 	"scott",
+	// 	"password",
+	// )
+	// // 5. At this point client and server both have a session key which should match, if they do, authentication was successful
+	// fmt.print("Client SessionKey: ")
+	// PrintHexBytesLine(&client_ctx.SessionKey)
+	// fmt.print("Server SessionKey: ")
+	// PrintHexBytesLine(&server_ctx.SessionKey)
 
     start_server()
 }
@@ -93,13 +114,67 @@ RegisterOpcodes :: proc() {
 
 on_login_challenge :: proc(event: ^enet.Event) {
     fmt.println("Received Login Challenge")
-}
 
-PrintHexBytesLine :: proc(bytes: ^[]u8) {
-	for &i in bytes {
-		fmt.printf("%2X", i)
+	data := event.packet.data[:event.packet.dataLength]
+
+	header := common.LoginChallengeHeader{}
+
+	mem.copy(&header, raw_data(data), size_of(header))
+
+	username := string(data[size_of(header):size_of(header)+header.username_len])
+	
+	sessionData := cast(^sessionData)event.peer.data
+	sessionData.username = username
+	big.int_from_bytes_little(sessionData.auth_context.PublicA, data[size_of(header) + header.username_len:size_of(header) + header.username_len + header.publicA_len])
+
+	AccountInfo :: struct {
+		id: int,
+		username: string,
+		verifier: string,
+		salt: string,
 	}
-	fmt.println()
+
+	account_data := AccountInfo{}
+
+	dberr := sqlite.db_select("FROM account where username = ?1", account_data, "scott")
+	fmt.println(dberr)
+	fmt.println(account_data)
+
+	big.string_to_int(sessionData.auth_context.Verifier, account_data.verifier, 16)
+	big.string_to_int(sessionData.auth_context.Salt, account_data.salt, 16)
+
+	srp6.ServerLoginChallenge(&sessionData.auth_context)
+
+	fmt.printfln("CMD_AUTH_LOGON_CHALLENGE [%s], Client Version [%d.%d.%d.%d].", username, header.major, header.minor, header.revision, header.build)
+
+	publicB_bytes_size, _ := big.int_to_bytes_size(sessionData.auth_context.PublicB)
+	publicB_bytes := make([]byte, publicB_bytes_size)
+	defer delete(publicB_bytes)
+	big.int_to_bytes_little(sessionData.auth_context.PublicB, publicB_bytes)
+
+	salt_bytes_size, _ := big.int_to_bytes_size(sessionData.auth_context.Salt)
+	salt_bytes := make([]byte, salt_bytes_size)
+	defer delete(salt_bytes)
+	big.int_to_bytes_little(sessionData.auth_context.Salt, salt_bytes)
+
+	response_header := common.LoginChallengeResponseHeader {
+		opcode = u16(common.MSG.SMSG_LOGIN_CHALLENGE_OK),
+		length = u16(size_of(common.LoginChallengeResponseHeader) + publicB_bytes_size + salt_bytes_size),
+		publicB_len = u16(publicB_bytes_size),
+		salt_len = u16(salt_bytes_size),
+	}
+
+	//IS THIS NEEDED?
+	// sessionData.M1 = new BigInteger(sha.ComputeHash(sessionData.PublicA.ToByteArray().Concat(sessionData.PublicB.ToByteArray()).Concat(sessionData.SessionKey).ToArray()).Concat(new byte[] { 0 }).ToArray());
+
+	response := make([]u8, size_of(response_header) + publicB_bytes_size + salt_bytes_size)
+	mem.copy(&response[0], &response_header, size_of(response_header))
+	mem.copy(&response[size_of(response_header)], raw_data(publicB_bytes), publicB_bytes_size)
+	mem.copy(&response[size_of(response_header) + publicB_bytes_size], raw_data(salt_bytes), salt_bytes_size)
+
+	packet := enet.packet_create(&response[0], len(response), {.RELIABLE})
+	enet.peer_send(event.peer, 0, packet)
+	enet.host_flush(event.peer.host)
 }
 
 do_migrations :: proc() -> (err: sqlite.Result_Code) {
@@ -170,6 +245,13 @@ db_execute_statements :: proc(statements: string) -> (err: sqlite.Result_Code) {
 	return
 }
 
+sessionData :: struct {
+	auth_context: srp6.srp6_context,
+	username: string,
+}
+
+server_running := true
+
 start_server :: proc() {
 	enet.initialize()
 	defer enet.deinitialize()
@@ -182,11 +264,14 @@ start_server :: proc() {
 	}
 	defer enet.host_destroy(server)
 
-	for true {
+	for server_running {
 		for enet.host_service(server, &event, 1000) > 0 {
 			#partial switch event.type {
 			case .CONNECT:
-				fmt.println("Incomming connection!")
+				fmt.println("Incomming connection")
+				sessionData := new(sessionData)
+				event.peer.data = sessionData
+				srp6.InitContext(&sessionData.auth_context, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
 			case .RECEIVE:
                 opcode := cast([^]u16)event.packet.data
 				data := event.packet.data[:event.packet.dataLength]
@@ -194,7 +279,7 @@ start_server :: proc() {
 				// value := cast(u32)data^
 				// values := raw_data(data[0:event.packet.dataLength - 1])
 				fmt.println(event.packet.dataLength, " bytes received")
-                PrintHexBytesLine(&data)
+                common.PrintHexBytesLine(&data)
 				// array := []u8{data[0], data[1], data[2]}
 				// data_len := event.packet.dataLength
 
@@ -203,9 +288,15 @@ start_server :: proc() {
                 }
 
                 // fmt.println("Data received", array, "of size", data_len)
-				enet.peer_disconnect(event.peer, 42)
+				// enet.peer_disconnect(event.peer, 42)
             case .DISCONNECT:
-                fmt.println("Disconnected!")
+				fmt.println("Disconnection!")
+				sessionData := cast(^sessionData)event.peer.data
+				srp6.DestroyContext(&sessionData.auth_context)
+				free(sessionData)
+				event.peer.data = nil
+
+				// server_running = false
 			}
 		}
 	}

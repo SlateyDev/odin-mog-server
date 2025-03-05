@@ -8,6 +8,8 @@ import "core:math/big"
 import "core:mem"
 import enet "vendor:ENet"
 
+client_running := true
+
 main :: proc() {
 	when ODIN_DEBUG {
 		track: mem.Tracking_Allocator
@@ -63,11 +65,26 @@ main :: proc() {
 	defer srp6.DestroyContext(&client_srp_context)
 
 	if enet.host_service(client, &event, 1000) > 0 && event.type == .CONNECT {
-		fmt.println("It works!")
-
+		fmt.println("Connected!")
 		SendClientLoginChallenge(peer, &client_srp_context, "scott")
-
 		enet.host_flush(client)
+
+		for client_running {
+			for enet.host_service(client, &event, 1000) > 0 {
+				#partial switch event.type {
+				case .RECEIVE:
+					// opcode := cast([^]u16)event.packet.data
+					data := event.packet.data[:event.packet.dataLength]
+		
+					fmt.println(event.packet.dataLength, " bytes received")
+					common.PrintHexBytesLine(&data)
+				case .DISCONNECT:
+					fmt.println("Lost Connection!")
+					//Here it could look at reconnecting if you want, we are just going to quit though
+					client_running = false
+				}
+			}
+		}
 	} else {
 		fmt.println("Nay!")
 	}

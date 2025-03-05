@@ -120,21 +120,21 @@ ClientLoginChallenge :: proc(ctx: ^srp6_context) -> (err: big.Error) {
 	return
 }
 
+// Requires PublicA and Verifier to be set in context
 ServerLoginChallenge :: proc(
 	ctx: ^srp6_context,
-	PublicA: ^big.Int,
-	Verifier: ^big.Int,
 ) -> (
 	err: big.Error,
 ) {
-	big.copy(ctx.PublicA, PublicA) or_return
+	big.assert_if_nil(ctx.PublicA)
+	big.assert_if_nil(ctx.Verifier)
 
 	big.int_random(ctx.PrivateB, SALT_LENGTH_BITS) or_return
 
 	// PublicB = ((k * Verifier) + ModPow(g, b, N)) % N
 	temp := &big.Int{}
 	defer big.destroy(temp)
-	big.mul(temp, ctx.k, Verifier) or_return
+	big.mul(temp, ctx.k, ctx.Verifier) or_return
 	big.internal_powmod(ctx.PublicB, ctx.g, ctx.PrivateB, ctx.N) or_return
 	big.add(ctx.PublicB, temp, ctx.PublicB) or_return
 	big.mod(ctx.PublicB, ctx.PublicB, ctx.N) or_return
@@ -165,7 +165,7 @@ ServerLoginChallenge :: proc(
 	// S = ModPow((PublicA * ModPow(Verifier, u, N)), b, N)
 	tempS := &big.Int{}
 	defer big.destroy(tempS)
-	big.internal_powmod(tempS, Verifier, temp_u, ctx.N) or_return
+	big.internal_powmod(tempS, ctx.Verifier, temp_u, ctx.N) or_return
 	big.mul(tempS, tempS, ctx.PublicA) or_return
 	big.internal_powmod(tempS, tempS, ctx.PrivateB, ctx.N) or_return
 
