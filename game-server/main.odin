@@ -7,7 +7,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import enet "vendor:ENet"
-import "srp6"
+import "../srp6"
 
 main :: proc() {
 	when ODIN_DEBUG {
