@@ -1,5 +1,6 @@
 package main
 
+import "../common"
 import "../srp6"
 import "core:crypto/hash"
 import "core:fmt"
@@ -72,21 +73,6 @@ main :: proc() {
 	}
 }
 
-MessageHeader :: struct {
-	opcode: u16,
-	length: u16,
-}
-
-LoginChallengeHeader :: struct {
-	using header: MessageHeader,
-	major: u8,
-	minor: u8,
-	revision: u8,
-	build: u16,
-	username_len: u16,
-	publicA_len: u16,
-}
-
 SendClientLoginChallenge :: proc(peer: ^enet.Peer, ctx: ^srp6.srp6_context, username: string) -> (err: big.Error) {
 	srp6.ClientLoginChallenge(ctx) or_return
 
@@ -95,13 +81,13 @@ SendClientLoginChallenge :: proc(peer: ^enet.Peer, ctx: ^srp6.srp6_context, user
 	defer delete(publicA_bytes)
 	big.int_to_bytes_little(ctx.PublicA, publicA_bytes) or_return
 	
-	data_size := size_of(LoginChallengeHeader) + len(username) + publicA_bytes_size
+	data_size := size_of(common.LoginChallengeHeader) + len(username) + publicA_bytes_size
 	data := make([]u8, data_size)
 	defer delete(data)
 
-	message := LoginChallengeHeader{
-		opcode = 12,
-		length = u16(size_of(LoginChallengeHeader) + len(username) + publicA_bytes_size),
+	message := common.LoginChallengeHeader{
+		opcode = u16(common.MSG.CMSG_LOGIN_CHALLENGE),
+		length = u16(size_of(common.LoginChallengeHeader) + len(username) + publicA_bytes_size),
 		major = 4,
 		minor = 5,
 		revision = 6,
@@ -152,13 +138,13 @@ SendClientLoginProof :: proc(
 	M1 := hash.hash(.SHA256, hash_data)
 	defer delete(M1)
 
-	data_size := size_of(MessageHeader) + len(M1)
+	data_size := size_of(common.MessageHeader) + len(M1)
 	data := make([]u8, data_size)
 	defer delete(data)
 
-	message := MessageHeader{
-		opcode = 12,
-		length = u16(size_of(MessageHeader) + len(M1)),
+	message := common.MessageHeader{
+		opcode = u16(common.MSG.CMSG_LOGIN_PROOF),
+		length = u16(size_of(common.MessageHeader) + len(M1)),
 	}
 
 	mem.copy(&data[0], &message, size_of(message))

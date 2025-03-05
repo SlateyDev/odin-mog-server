@@ -1,5 +1,6 @@
 package main
 
+import "../common"
 import "../sqlite"
 import "../srp6"
 import "core:fmt"
@@ -8,6 +9,12 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 import enet "vendor:ENet"
+
+OpcodeHandler :: struct {
+    on_receive: proc(event: ^enet.Event),
+}
+
+opcodes: map[u16]OpcodeHandler
 
 main :: proc() {
 	when ODIN_DEBUG {
@@ -31,6 +38,10 @@ main :: proc() {
 			mem.tracking_allocator_destroy(&track)
 		}
 	}
+
+    defer delete(opcodes)
+
+    RegisterOpcodes()
 
 	sqlite.db_check(sqlite.db_init("test.db"))
 	defer sqlite.db_check(sqlite.db_destroy())
@@ -73,7 +84,15 @@ main :: proc() {
 	fmt.print("Server SessionKey: ")
 	PrintHexBytesLine(&server_ctx.SessionKey)
 
-	start_server()
+    start_server()
+}
+
+RegisterOpcodes :: proc() {
+    opcodes[u16(common.MSG.CMSG_LOGIN_CHALLENGE)] = OpcodeHandler{on_login_challenge}
+}
+
+on_login_challenge :: proc(event: ^enet.Event) {
+    fmt.println("Received Login Challenge")
 }
 
 PrintHexBytesLine :: proc(bytes: ^[]u8) {
@@ -169,7 +188,9 @@ start_server :: proc() {
 			case .CONNECT:
 				fmt.println("Incomming connection!")
 			case .RECEIVE:
+                opcode := cast([^]u16)event.packet.data
 				data := event.packet.data[:event.packet.dataLength]
+
 				// value := cast(u32)data^
 				// values := raw_data(data[0:event.packet.dataLength - 1])
 				fmt.println(event.packet.dataLength, " bytes received")
@@ -177,8 +198,14 @@ start_server :: proc() {
 				// array := []u8{data[0], data[1], data[2]}
 				// data_len := event.packet.dataLength
 
-				// fmt.println("Data received", array, "of size", data_len)
+                if opcode[0] in opcodes {
+                    opcodes[opcode[0]].on_receive(&event)
+                }
+
+                // fmt.println("Data received", array, "of size", data_len)
 				enet.peer_disconnect(event.peer, 42)
+            case .DISCONNECT:
+                fmt.println("Disconnected!")
 			}
 		}
 	}
