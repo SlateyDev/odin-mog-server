@@ -1,2 +1,7 @@
 /build
+
+#Source code for other libraries (such as SQLite)
+/lib-source
+
+#Generated SQLite DB file
 *.db
