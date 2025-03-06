@@ -16,14 +16,15 @@ OpcodeHandler :: struct {
 	on_receive: proc(event: ^enet.Event),
 }
 
-opcodes: map[u16]OpcodeHandler
+opcodes: map[common.MSG_OPCODE]OpcodeHandler
 
 create_test_user :: false
-test_username := "scott"
-test_password := "password"
+test_username :: "scott"
+test_password :: "password"
 
-major_version := 0
-minor_version := 1
+major_version :: 0
+minor_version :: 1
+build_version :: 1
 
 main :: proc() {
 	common.print_logo()
@@ -88,8 +89,8 @@ main :: proc() {
 }
 
 RegisterOpcodes :: proc() {
-	opcodes[u16(common.MSG.CMSG_LOGIN_CHALLENGE)] = OpcodeHandler{on_login_challenge}
-	opcodes[u16(common.MSG.CMSG_LOGIN_PROOF)] = OpcodeHandler{on_login_proof}
+	opcodes[.CMSG_LOGIN_CHALLENGE] = OpcodeHandler{on_login_challenge}
+	opcodes[.CMSG_LOGIN_PROOF] = OpcodeHandler{on_login_proof}
 }
 
 on_login_challenge :: proc(event: ^enet.Event) {
@@ -98,10 +99,24 @@ on_login_challenge :: proc(event: ^enet.Event) {
 	data := event.packet.data[:event.packet.dataLength]
 	header := cast(^common.LoginChallengeHeader)event.packet.data
 
+	if header.major != major_version || header.minor != minor_version || header.build != build_version {
+		failure_response := common.FailureMessageHeader{
+			opcode = .SMSG_LOGIN_CHALLENGE_FAIL,
+			length = size_of(common.FailureMessageHeader),
+			failure = .BAD_VERSION,
+		}
+		packet := enet.packet_create(&failure_response, size_of(common.FailureMessageHeader), {.RELIABLE})
+		enet.peer_send(event.peer, 0, packet)
+		enet.peer_disconnect_later(event.peer, 0)
+		return
+	}
+
 	username := string(
 		data[size_of(common.LoginChallengeHeader):size_of(common.LoginChallengeHeader) +
 		header.username_len],
 	)
+
+	fmt.println("Attempting to connect as:", username)
 
 	sessionData := cast(^sessionData)event.peer.data
 	sessionData.username = username
@@ -115,19 +130,45 @@ on_login_challenge :: proc(event: ^enet.Event) {
 
 	AccountInfo :: struct {
 		id:       int,
+		banned:   int,
 		verifier: string,
 		salt:     string,
 	}
 
 	account_data := AccountInfo{}
 
-	dberr := sqlite.db_select(
+	dberr := sqlite.db_select_single(
 		"FROM account where username = ?1",
 		account_data,
 		sessionData.username,
 	)
-	fmt.println(dberr)
+
+	if dberr != .OK {
+		fmt.println("DB Error:", dberr)
+		failure_response := common.FailureMessageHeader{
+			opcode = .SMSG_LOGIN_CHALLENGE_FAIL,
+			length = size_of(common.FailureMessageHeader),
+			failure = dberr == .EMPTY ? .UNKNOWN_ACCOUNT : .BUSY,
+		}
+		packet := enet.packet_create(&failure_response, size_of(common.FailureMessageHeader), {.RELIABLE})
+		enet.peer_send(event.peer, 0, packet)
+		enet.peer_disconnect_later(event.peer, 0)
+		return
+	}
 	fmt.println(account_data)
+
+	if account_data.banned != 0 {
+		fmt.println("User is banned")
+		failure_response := common.FailureMessageHeader{
+			opcode = .SMSG_LOGIN_CHALLENGE_FAIL,
+			length = size_of(common.FailureMessageHeader),
+			failure = .BANNED,
+		}
+		packet := enet.packet_create(&failure_response, size_of(common.FailureMessageHeader), {.RELIABLE})
+		enet.peer_send(event.peer, 0, packet)
+		enet.peer_disconnect_later(event.peer, 0)
+		return
+	}
 
 	big.string_to_int(sessionData.auth_context.Verifier, account_data.verifier, 16)
 	big.string_to_int(sessionData.auth_context.Salt, account_data.salt, 16)
@@ -145,7 +186,7 @@ on_login_challenge :: proc(event: ^enet.Event) {
 	big.int_to_bytes_little(sessionData.auth_context.Salt, salt_bytes)
 
 	response_header := common.LoginChallengeResponseHeader {
-		opcode      = u16(common.MSG.SMSG_LOGIN_CHALLENGE_OK),
+		opcode      = .SMSG_LOGIN_CHALLENGE_OK,
 		length      = u16(
 			size_of(common.LoginChallengeResponseHeader) + publicB_bytes_size + salt_bytes_size,
 		),
@@ -209,7 +250,7 @@ on_login_proof :: proc(event: ^enet.Event) {
 
 	if (mem.compare(server_hash, client_hash) == 0) {
 		response := common.MessageHeader {
-			opcode = u16(common.MSG.SMSG_LOGIN_PROOF_OK),
+			opcode = .SMSG_LOGIN_PROOF_OK,
 			length = size_of(common.MessageHeader),
 		}
 		packet := enet.packet_create(&response, size_of(common.MessageHeader), {.RELIABLE})
@@ -218,7 +259,7 @@ on_login_proof :: proc(event: ^enet.Event) {
 	} else {
 		//Wrong pass
 		response := common.MessageHeader {
-			opcode = u16(common.MSG.SMSG_LOGIN_PROOF_FAIL),
+			opcode = .SMSG_LOGIN_PROOF_FAIL,
 			length = size_of(common.MessageHeader),
 		}
 		packet := enet.packet_create(&response, size_of(common.MessageHeader), {.RELIABLE})
@@ -324,10 +365,10 @@ start_server :: proc() {
 				event.peer.data = sessionData
 				srp6.InitContext(&sessionData.auth_context, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
 			case .RECEIVE:
-				opcode := cast(^u16)event.packet.data
+				opcode := cast(^common.MSG_OPCODE)event.packet.data
 
 				data := event.packet.data[:event.packet.dataLength]
-				fmt.println(event.packet.dataLength, " bytes received")
+				fmt.println(event.packet.dataLength, "bytes received")
 				common.PrintHexBytesLine(&data)
 
 				if opcode^ in opcodes {

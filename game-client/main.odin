@@ -14,10 +14,14 @@ OpcodeHandler :: struct {
 	on_receive: proc(event: ^enet.Event),
 }
 
-opcodes: map[u16]OpcodeHandler
+opcodes: map[common.MSG_OPCODE]OpcodeHandler
 
-test_username := "scott"
-test_password := "password"
+test_username :: "scott"
+test_password :: "password"
+
+major_version :: 0
+minor_version :: 1
+build_version :: 1
 
 main :: proc() {
 	when ODIN_DEBUG {
@@ -86,7 +90,7 @@ main :: proc() {
 			for enet.host_service(client, &event, 1000) > 0 {
 				#partial switch event.type {
 				case .RECEIVE:
-					opcode := cast(^u16)event.packet.data
+					opcode := cast(^common.MSG_OPCODE)event.packet.data
 
 					data := event.packet.data[:event.packet.dataLength]
 					fmt.println(event.packet.dataLength, " bytes received")
@@ -113,10 +117,10 @@ main :: proc() {
 }
 
 RegisterOpcodes :: proc() {
-	opcodes[u16(common.MSG.SMSG_LOGIN_CHALLENGE_OK)] = OpcodeHandler{on_login_challenge_ok}
-	opcodes[u16(common.MSG.SMSG_LOGIN_CHALLENGE_FAIL)] = OpcodeHandler{on_login_challenge_fail}
-	opcodes[u16(common.MSG.SMSG_LOGIN_PROOF_OK)] = OpcodeHandler{on_login_proof_ok}
-	opcodes[u16(common.MSG.SMSG_LOGIN_PROOF_FAIL)] = OpcodeHandler{on_login_proof_fail}
+	opcodes[.SMSG_LOGIN_CHALLENGE_OK] = OpcodeHandler{on_login_challenge_ok}
+	opcodes[.SMSG_LOGIN_CHALLENGE_FAIL] = OpcodeHandler{on_login_challenge_fail}
+	opcodes[.SMSG_LOGIN_PROOF_OK] = OpcodeHandler{on_login_proof_ok}
+	opcodes[.SMSG_LOGIN_PROOF_FAIL] = OpcodeHandler{on_login_proof_fail}
 }
 
 ClientSessionData :: struct {
@@ -188,14 +192,13 @@ SendClientLoginChallenge :: proc(
 	defer delete(data)
 
 	message := common.LoginChallengeHeader {
-		opcode       = u16(common.MSG.CMSG_LOGIN_CHALLENGE),
+		opcode       = .CMSG_LOGIN_CHALLENGE,
 		length       = u16(
 			size_of(common.LoginChallengeHeader) + len(username) + publicA_bytes_size,
 		),
-		major        = 4,
-		minor        = 5,
-		revision     = 6,
-		build        = 7,
+		major        = major_version,
+		minor        = minor_version,
+		build        = build_version,
 		username_len = u16(len(username)),
 		publicA_len  = u16(publicA_bytes_size),
 	}
@@ -245,7 +248,7 @@ SendClientLoginProof :: proc(
 	defer delete(data)
 
 	message := common.LoginProofHeader {
-		opcode   = u16(common.MSG.CMSG_LOGIN_PROOF),
+		opcode   = .CMSG_LOGIN_PROOF,
 		length   = u16(size_of(common.LoginProofHeader) + len(M1)),
 		hash_len = u16(len(M1)),
 	}

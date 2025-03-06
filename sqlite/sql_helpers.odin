@@ -165,7 +165,7 @@ db_bind :: proc(stmt: ^Stmt, args: ..any) -> (err: Result_Code) {
 
 // data from the struct has to match wanted column names
 // changes the cmd string to the arg which should be a struct
-db_select :: proc(cmd_end: string, struct_arg: any, args: ..any) -> (err: Result_Code) {
+db_select_single :: proc(cmd_end: string, struct_arg: any, args: ..any) -> (err: Result_Code) {
 	b := strings.builder_make_len_cap(0, 128)
 	defer strings.builder_destroy(&b)
 
@@ -185,27 +185,27 @@ db_select :: proc(cmd_end: string, struct_arg: any, args: ..any) -> (err: Result
 
 	strings.write_string(&b, cmd_end)
 
+	strings.write_string(&b, " LIMIT 1")
+
 	full_cmd := strings.to_string(b)
 	// fmt.println(full_cmd)
 	stmt := db_cache_prepare(full_cmd) or_return
 	db_bind(stmt, ..args) or_return
 
-	for {
-		result := step(stmt)
+	result := step(stmt)
 
-		if result == .DONE {
-			break
-		} else if result != .ROW {
-			return result
-		}
+	if result == .DONE {
+		return .EMPTY
+	} else if result != .ROW {
+		return result
+	}
 
-		// get column data per struct field
-		for i in 0..<int(struct_info.field_count) {
-			type := struct_info.types[i].id
-			offset := struct_info.offsets[i]
-			struct_value := any { rawptr(uintptr(struct_arg.data) + offset), type }
-			db_any_column(stmt, i32(i), struct_value) or_return
-		}
+	// get column data per struct field
+	for i in 0..<int(struct_info.field_count) {
+		type := struct_info.types[i].id
+		offset := struct_info.offsets[i]
+		struct_value := any { rawptr(uintptr(struct_arg.data) + offset), type }
+		db_any_column(stmt, i32(i), struct_value) or_return
 	}
 
 	return
