@@ -121,11 +121,7 @@ ClientLoginChallenge :: proc(ctx: ^srp6_context) -> (err: big.Error) {
 }
 
 // Requires PublicA and Verifier to be set in context
-ServerLoginChallenge :: proc(
-	ctx: ^srp6_context,
-) -> (
-	err: big.Error,
-) {
+ServerLoginChallenge :: proc(ctx: ^srp6_context) -> (err: big.Error) {
 	big.assert_if_nil(ctx.PublicA)
 	big.assert_if_nil(ctx.Verifier)
 

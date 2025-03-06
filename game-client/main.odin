@@ -11,7 +11,7 @@ import enet "vendor:ENet"
 client_running := true
 
 OpcodeHandler :: struct {
-    on_receive: proc(event: ^enet.Event),
+	on_receive: proc(event: ^enet.Event),
 }
 
 opcodes: map[u16]OpcodeHandler
@@ -43,7 +43,7 @@ main :: proc() {
 	}
 
 	defer delete(opcodes)
-    RegisterOpcodes()
+	RegisterOpcodes()
 
 	enet.initialize()
 	defer enet.deinitialize()
@@ -91,7 +91,7 @@ main :: proc() {
 					data := event.packet.data[:event.packet.dataLength]
 					fmt.println(event.packet.dataLength, " bytes received")
 					common.PrintHexBytesLine(&data)
-	
+
 					if opcode^ in opcodes {
 						opcodes[opcode^].on_receive(&event)
 					}
@@ -113,10 +113,10 @@ main :: proc() {
 }
 
 RegisterOpcodes :: proc() {
-    opcodes[u16(common.MSG.SMSG_LOGIN_CHALLENGE_OK)] = OpcodeHandler{on_login_challenge_ok}
-    opcodes[u16(common.MSG.SMSG_LOGIN_CHALLENGE_FAIL)] = OpcodeHandler{on_login_challenge_fail}
-    opcodes[u16(common.MSG.SMSG_LOGIN_PROOF_OK)] = OpcodeHandler{on_login_proof_ok}
-    opcodes[u16(common.MSG.SMSG_LOGIN_PROOF_FAIL)] = OpcodeHandler{on_login_proof_fail}
+	opcodes[u16(common.MSG.SMSG_LOGIN_CHALLENGE_OK)] = OpcodeHandler{on_login_challenge_ok}
+	opcodes[u16(common.MSG.SMSG_LOGIN_CHALLENGE_FAIL)] = OpcodeHandler{on_login_challenge_fail}
+	opcodes[u16(common.MSG.SMSG_LOGIN_PROOF_OK)] = OpcodeHandler{on_login_proof_ok}
+	opcodes[u16(common.MSG.SMSG_LOGIN_PROOF_FAIL)] = OpcodeHandler{on_login_proof_fail}
 }
 
 ClientSessionData :: struct {
@@ -127,12 +127,24 @@ on_login_challenge_ok :: proc(event: ^enet.Event) {
 	fmt.println("on_login_challenge_ok")
 
 	data := event.packet.data[:event.packet.dataLength]
-    header := cast(^common.LoginChallengeResponseHeader)event.packet.data
+	header := cast(^common.LoginChallengeResponseHeader)event.packet.data
 
 	sessionData := cast(^ClientSessionData)event.peer.data
 
-	big.int_from_bytes_little(sessionData.auth_context.PublicB, data[size_of(common.LoginChallengeResponseHeader):size_of(common.LoginChallengeResponseHeader) + header.publicB_len])
-	big.int_from_bytes_little(sessionData.auth_context.Salt, data[size_of(common.LoginChallengeResponseHeader) + header.publicB_len:size_of(common.LoginChallengeResponseHeader) + header.publicB_len + header.salt_len])
+	big.int_from_bytes_little(
+		sessionData.auth_context.PublicB,
+		data[size_of(common.LoginChallengeResponseHeader):size_of(
+			common.LoginChallengeResponseHeader,
+		) +
+		header.publicB_len],
+	)
+	big.int_from_bytes_little(
+		sessionData.auth_context.Salt,
+		data[size_of(common.LoginChallengeResponseHeader) +
+		header.publicB_len:size_of(common.LoginChallengeResponseHeader) +
+		header.publicB_len +
+		header.salt_len],
+	)
 
 	SendClientLoginProof(event.peer, &sessionData.auth_context, test_username, test_password)
 }
@@ -157,27 +169,35 @@ on_login_proof_fail :: proc(event: ^enet.Event) {
 	enet.peer_disconnect(event.peer, 42)
 }
 
-SendClientLoginChallenge :: proc(peer: ^enet.Peer, ctx: ^srp6.srp6_context, username: string) -> (err: big.Error) {
+SendClientLoginChallenge :: proc(
+	peer: ^enet.Peer,
+	ctx: ^srp6.srp6_context,
+	username: string,
+) -> (
+	err: big.Error,
+) {
 	srp6.ClientLoginChallenge(ctx) or_return
 
 	publicA_bytes_size := big.int_to_bytes_size(ctx.PublicA) or_return
 	publicA_bytes := make([]byte, publicA_bytes_size)
 	defer delete(publicA_bytes)
 	big.int_to_bytes_little(ctx.PublicA, publicA_bytes) or_return
-	
+
 	data_size := size_of(common.LoginChallengeHeader) + len(username) + publicA_bytes_size
 	data := make([]u8, data_size)
 	defer delete(data)
 
-	message := common.LoginChallengeHeader{
-		opcode = u16(common.MSG.CMSG_LOGIN_CHALLENGE),
-		length = u16(size_of(common.LoginChallengeHeader) + len(username) + publicA_bytes_size),
-		major = 4,
-		minor = 5,
-		revision = 6,
-		build = 7,
+	message := common.LoginChallengeHeader {
+		opcode       = u16(common.MSG.CMSG_LOGIN_CHALLENGE),
+		length       = u16(
+			size_of(common.LoginChallengeHeader) + len(username) + publicA_bytes_size,
+		),
+		major        = 4,
+		minor        = 5,
+		revision     = 6,
+		build        = 7,
 		username_len = u16(len(username)),
-		publicA_len = u16(publicA_bytes_size),
+		publicA_len  = u16(publicA_bytes_size),
 	}
 
 	mem.copy(&data[0], &message, size_of(message))
@@ -224,9 +244,9 @@ SendClientLoginProof :: proc(
 	data := make([]u8, data_size)
 	defer delete(data)
 
-	message := common.LoginProofHeader{
-		opcode = u16(common.MSG.CMSG_LOGIN_PROOF),
-		length = u16(size_of(common.LoginProofHeader) + len(M1)),
+	message := common.LoginProofHeader {
+		opcode   = u16(common.MSG.CMSG_LOGIN_PROOF),
+		length   = u16(size_of(common.LoginProofHeader) + len(M1)),
 		hash_len = u16(len(M1)),
 	}
 
