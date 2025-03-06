@@ -22,7 +22,13 @@ create_test_user :: false
 test_username := "scott"
 test_password := "password"
 
+major_version := 0
+minor_version := 1
+
 main :: proc() {
+	common.print_logo()
+	fmt.printfln("Slatey-MOG Login Server v%d.%d\n", major_version, minor_version)
+
 	when ODIN_DEBUG {
 		track: mem.Tracking_Allocator
 		mem.tracking_allocator_init(&track, context.allocator)

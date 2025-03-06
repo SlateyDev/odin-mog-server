@@ -29,8 +29,7 @@
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
-            "internalConsoleOptions": "openOnSessionStart",
+            "console": "integratedTerminal",
         },
         {
             "name": "game-client - Debug",
@@ -41,8 +40,7 @@
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
-            "internalConsoleOptions": "openOnSessionStart",
+            "console": "integratedTerminal",
         },
         {
             "name": "game-server - Release",
@@ -53,8 +51,7 @@
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
-            "internalConsoleOptions": "openOnSessionStart",
+            "console": "integratedTerminal",
         },
         {
             "name": "game-client - Release",
@@ -65,8 +62,7 @@
             "args": [],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
-            "console": "internalConsole",
-            "internalConsoleOptions": "openOnSessionStart",
+            "console": "integratedTerminal",
         },
     ],
 }
