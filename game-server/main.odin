@@ -18,7 +18,7 @@ OpcodeHandler :: struct {
 
 opcodes: map[common.MSG_OPCODE]OpcodeHandler
 
-create_test_user :: false
+create_test_user :: true
 test_username :: "scott"
 test_password :: "password"
 
@@ -258,11 +258,12 @@ on_login_proof :: proc(event: ^enet.Event) {
 		enet.host_flush(event.peer.host)
 	} else {
 		//Wrong pass
-		response := common.MessageHeader {
+		response := common.FailureMessageHeader {
 			opcode = .SMSG_LOGIN_PROOF_FAIL,
-			length = size_of(common.MessageHeader),
+			length = size_of(common.FailureMessageHeader),
+			failure = .UNKNOWN_ACCOUNT,
 		}
-		packet := enet.packet_create(&response, size_of(common.MessageHeader), {.RELIABLE})
+		packet := enet.packet_create(&response, size_of(common.FailureMessageHeader), {.RELIABLE})
 		enet.peer_send(event.peer, 0, packet)
 		enet.host_flush(event.peer.host)
 		enet.peer_disconnect_later(event.peer, 42)
