@@ -180,17 +180,17 @@ ServerLoginChallenge :: proc(
 	return
 }
 
+// Requires PublicB and Salt to be set in context
 ClientLoginProof :: proc(
 	ctx: ^srp6_context,
-	PublicB: ^big.Int,
-	Salt: ^big.Int,
 	Username: string,
 	Password: string,
 ) -> (
 	err: big.Error,
 ) {
-	big.copy(ctx.PublicB, PublicB) or_return
-	big.copy(ctx.Salt, Salt) or_return
+	big.assert_if_nil(ctx.PublicA)
+	big.assert_if_nil(ctx.PublicB)
+	big.assert_if_nil(ctx.Salt)
 
 	// u = BigInteger(sha256(concat(PublicA, PublicB)))
 	PublicA_byte_count := big.int_to_bytes_size(ctx.PublicA) or_return

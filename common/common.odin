@@ -35,6 +35,12 @@ LoginChallengeResponseHeader :: struct {
 	salt_len: u16,
 }
 
+LoginProofHeader :: struct {
+	using header: MessageHeader,
+	hash_len: u16,
+}
+
+
 PrintHexBytesLine :: proc(bytes: ^[]u8) {
 	for &i in bytes {
 		fmt.printf("%2X", i)

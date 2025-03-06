@@ -10,6 +10,15 @@ import enet "vendor:ENet"
 
 client_running := true
 
+OpcodeHandler :: struct {
+    on_receive: proc(event: ^enet.Event),
+}
+
+opcodes: map[u16]OpcodeHandler
+
+test_username := "scott"
+test_password := "password"
+
 main :: proc() {
 	when ODIN_DEBUG {
 		track: mem.Tracking_Allocator
@@ -32,6 +41,9 @@ main :: proc() {
 			mem.tracking_allocator_destroy(&track)
 		}
 	}
+
+	defer delete(opcodes)
+    RegisterOpcodes()
 
 	enet.initialize()
 	defer enet.deinitialize()
@@ -60,26 +72,36 @@ main :: proc() {
 
 	fmt.println("Establishing connection!")
 
-	client_srp_context := srp6.srp6_context{}
-	srp6.InitContext(&client_srp_context, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
-	defer srp6.DestroyContext(&client_srp_context)
-
 	if enet.host_service(client, &event, 1000) > 0 && event.type == .CONNECT {
-		fmt.println("Connected!")
-		SendClientLoginChallenge(peer, &client_srp_context, "scott")
-		enet.host_flush(client)
+		{
+			fmt.println("Connected!")
+			sessionData := new(ClientSessionData)
+			event.peer.data = sessionData
+			srp6.InitContext(&sessionData.auth_context, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
+			SendClientLoginChallenge(peer, &sessionData.auth_context, test_username)
+			enet.host_flush(client)
+		}
 
 		for client_running {
 			for enet.host_service(client, &event, 1000) > 0 {
 				#partial switch event.type {
 				case .RECEIVE:
-					// opcode := cast([^]u16)event.packet.data
+					opcode := cast(^u16)event.packet.data
+
 					data := event.packet.data[:event.packet.dataLength]
-		
 					fmt.println(event.packet.dataLength, " bytes received")
 					common.PrintHexBytesLine(&data)
+	
+					if opcode^ in opcodes {
+						opcodes[opcode^].on_receive(&event)
+					}
 				case .DISCONNECT:
 					fmt.println("Lost Connection!")
+					sessionData := cast(^ClientSessionData)event.peer.data
+					srp6.DestroyContext(&sessionData.auth_context)
+					free(sessionData)
+					event.peer.data = nil
+
 					//Here it could look at reconnecting if you want, we are just going to quit though
 					client_running = false
 				}
@@ -88,6 +110,51 @@ main :: proc() {
 	} else {
 		fmt.println("Nay!")
 	}
+}
+
+RegisterOpcodes :: proc() {
+    opcodes[u16(common.MSG.SMSG_LOGIN_CHALLENGE_OK)] = OpcodeHandler{on_login_challenge_ok}
+    opcodes[u16(common.MSG.SMSG_LOGIN_CHALLENGE_FAIL)] = OpcodeHandler{on_login_challenge_fail}
+    opcodes[u16(common.MSG.SMSG_LOGIN_PROOF_OK)] = OpcodeHandler{on_login_proof_ok}
+    opcodes[u16(common.MSG.SMSG_LOGIN_PROOF_FAIL)] = OpcodeHandler{on_login_proof_fail}
+}
+
+ClientSessionData :: struct {
+	auth_context: srp6.srp6_context,
+}
+
+on_login_challenge_ok :: proc(event: ^enet.Event) {
+	fmt.println("on_login_challenge_ok")
+
+	data := event.packet.data[:event.packet.dataLength]
+    header := cast(^common.LoginChallengeResponseHeader)event.packet.data
+
+	sessionData := cast(^ClientSessionData)event.peer.data
+
+	big.int_from_bytes_little(sessionData.auth_context.PublicB, data[size_of(common.LoginChallengeResponseHeader):size_of(common.LoginChallengeResponseHeader) + header.publicB_len])
+	big.int_from_bytes_little(sessionData.auth_context.Salt, data[size_of(common.LoginChallengeResponseHeader) + header.publicB_len:size_of(common.LoginChallengeResponseHeader) + header.publicB_len + header.salt_len])
+
+	SendClientLoginProof(event.peer, &sessionData.auth_context, test_username, test_password)
+}
+
+on_login_challenge_fail :: proc(event: ^enet.Event) {
+	fmt.println("on_login_challenge_fail")
+
+	enet.peer_disconnect(event.peer, 42)
+}
+
+on_login_proof_ok :: proc(event: ^enet.Event) {
+	fmt.println("on_login_proof_ok")
+
+	// Request realm list
+
+	enet.peer_disconnect(event.peer, 42)
+}
+
+on_login_proof_fail :: proc(event: ^enet.Event) {
+	fmt.println("on_login_proof_fail")
+
+	enet.peer_disconnect(event.peer, 42)
 }
 
 SendClientLoginChallenge :: proc(peer: ^enet.Peer, ctx: ^srp6.srp6_context, username: string) -> (err: big.Error) {
@@ -126,14 +193,12 @@ SendClientLoginChallenge :: proc(peer: ^enet.Peer, ctx: ^srp6.srp6_context, user
 SendClientLoginProof :: proc(
 	peer: ^enet.Peer,
 	ctx: ^srp6.srp6_context,
-	public_b: ^big.Int,
-	salt: ^big.Int,
 	username: string,
 	password: string,
 ) -> (
 	err: big.Error,
 ) {
-	srp6.ClientLoginProof(ctx, public_b, salt, username, password) or_return
+	srp6.ClientLoginProof(ctx, username, password) or_return
 
 	PublicA_bytes_size := big.int_to_bytes_size(ctx.PublicA) or_return
 	PublicB_bytes_size := big.int_to_bytes_size(ctx.PublicB) or_return
@@ -155,17 +220,18 @@ SendClientLoginProof :: proc(
 	M1 := hash.hash(.SHA256, hash_data)
 	defer delete(M1)
 
-	data_size := size_of(common.MessageHeader) + len(M1)
+	data_size := size_of(common.LoginProofHeader) + len(M1)
 	data := make([]u8, data_size)
 	defer delete(data)
 
-	message := common.MessageHeader{
+	message := common.LoginProofHeader{
 		opcode = u16(common.MSG.CMSG_LOGIN_PROOF),
-		length = u16(size_of(common.MessageHeader) + len(M1)),
+		length = u16(size_of(common.LoginProofHeader) + len(M1)),
+		hash_len = u16(len(M1)),
 	}
 
-	mem.copy(&data[0], &message, size_of(message))
-	mem.copy(&data[size_of(message)], raw_data(M1), len(M1))
+	mem.copy(&data[0], &message, size_of(common.LoginProofHeader))
+	mem.copy(&data[size_of(common.LoginProofHeader)], raw_data(M1), len(M1))
 
 	packet := enet.packet_create(&data[0], len(data), {.RELIABLE})
 	enet.peer_send(peer, 0, packet)

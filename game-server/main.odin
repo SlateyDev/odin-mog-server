@@ -3,6 +3,7 @@ package main
 import "../common"
 import "../sqlite"
 import "../srp6"
+import "core:crypto/hash"
 import "core:fmt"
 import "core:math/big"
 import "core:mem"
@@ -16,6 +17,9 @@ OpcodeHandler :: struct {
 }
 
 opcodes: map[u16]OpcodeHandler
+
+test_username := "scott"
+test_password := "password"
 
 main :: proc() {
 	when ODIN_DEBUG {
@@ -41,7 +45,6 @@ main :: proc() {
 	}
 
     defer delete(opcodes)
-
     RegisterOpcodes()
 
 	sqlite.db_check(sqlite.db_init("test.db"))
@@ -53,15 +56,15 @@ main :: proc() {
 	registration_ctx := srp6.srp6_context{}
 	srp6.InitContext(&registration_ctx, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
 	defer srp6.DestroyContext(&registration_ctx)
-	err := srp6.CreateRegistration(&registration_ctx, "scott", "password")
+	err := srp6.CreateRegistration(&registration_ctx, test_username, test_password)
 	if err != .Okay {
 		fmt.println(err)
 	}
 
 	verifier, _ := big.itoa(registration_ctx.Verifier, 16)
 	salt, _ := big.itoa(registration_ctx.Salt, 16)
-	sqlite.db_execute("DELETE FROM account WHERE username = ?1", "scott")
-	sqlite.db_execute("INSERT INTO account (username, verifier, salt) values (?1, ?2, ?3)", "scott", verifier, salt)
+	sqlite.db_execute("DELETE FROM account WHERE username = ?1", test_username)
+	sqlite.db_execute("INSERT INTO account (username, verifier, salt) values (?1, ?2, ?3)", test_username, verifier, salt)
 	delete(verifier)
 	delete(salt)
 
@@ -74,7 +77,7 @@ main :: proc() {
 
 	account_data := AccountInfo{}
 
-	dberr := sqlite.db_select("FROM account where username = ?1", account_data, "scott")
+	dberr := sqlite.db_select("FROM account where username = ?1", account_data, test_username)
 	fmt.println(dberr)
 	fmt.println(account_data)
 
@@ -110,33 +113,32 @@ main :: proc() {
 
 RegisterOpcodes :: proc() {
     opcodes[u16(common.MSG.CMSG_LOGIN_CHALLENGE)] = OpcodeHandler{on_login_challenge}
+    opcodes[u16(common.MSG.CMSG_LOGIN_PROOF)] = OpcodeHandler{on_login_proof}
 }
 
 on_login_challenge :: proc(event: ^enet.Event) {
-    fmt.println("Received Login Challenge")
+    fmt.println("on_login_challenge")
 
 	data := event.packet.data[:event.packet.dataLength]
+    header := cast(^common.LoginChallengeHeader)event.packet.data
 
-	header := common.LoginChallengeHeader{}
+	username := string(data[size_of(common.LoginChallengeHeader):size_of(common.LoginChallengeHeader)+header.username_len])
 
-	mem.copy(&header, raw_data(data), size_of(header))
+    fmt.printfln("CMD_AUTH_LOGON_CHALLENGE [%s], Client Version [%d.%d.%d.%d].", username, header.major, header.minor, header.revision, header.build)
 
-	username := string(data[size_of(header):size_of(header)+header.username_len])
-	
 	sessionData := cast(^sessionData)event.peer.data
 	sessionData.username = username
-	big.int_from_bytes_little(sessionData.auth_context.PublicA, data[size_of(header) + header.username_len:size_of(header) + header.username_len + header.publicA_len])
+	big.int_from_bytes_little(sessionData.auth_context.PublicA, data[size_of(common.LoginChallengeHeader) + header.username_len:size_of(common.LoginChallengeHeader) + header.username_len + header.publicA_len])
 
 	AccountInfo :: struct {
 		id: int,
-		username: string,
 		verifier: string,
 		salt: string,
 	}
 
 	account_data := AccountInfo{}
 
-	dberr := sqlite.db_select("FROM account where username = ?1", account_data, "scott")
+	dberr := sqlite.db_select("FROM account where username = ?1", account_data, sessionData.username)
 	fmt.println(dberr)
 	fmt.println(account_data)
 
@@ -144,8 +146,6 @@ on_login_challenge :: proc(event: ^enet.Event) {
 	big.string_to_int(sessionData.auth_context.Salt, account_data.salt, 16)
 
 	srp6.ServerLoginChallenge(&sessionData.auth_context)
-
-	fmt.printfln("CMD_AUTH_LOGON_CHALLENGE [%s], Client Version [%d.%d.%d.%d].", username, header.major, header.minor, header.revision, header.build)
 
 	publicB_bytes_size, _ := big.int_to_bytes_size(sessionData.auth_context.PublicB)
 	publicB_bytes := make([]byte, publicB_bytes_size)
@@ -175,6 +175,74 @@ on_login_challenge :: proc(event: ^enet.Event) {
 	packet := enet.packet_create(&response[0], len(response), {.RELIABLE})
 	enet.peer_send(event.peer, 0, packet)
 	enet.host_flush(event.peer.host)
+}
+
+on_login_proof :: proc(event: ^enet.Event) {
+    fmt.println("on_login_proof")
+
+    sessionData := cast(^sessionData)event.peer.data
+    ctx := &sessionData.auth_context
+
+    data := event.packet.data[:event.packet.dataLength]
+    header := cast(^common.LoginProofHeader)event.packet.data
+    client_hash := data[size_of(common.LoginProofHeader):size_of(common.LoginProofHeader) + header.hash_len]
+
+    //Generate our hash
+    PublicA_bytes_size, _ := big.int_to_bytes_size(ctx.PublicA)
+	PublicB_bytes_size, _ := big.int_to_bytes_size(ctx.PublicB)
+
+	PublicA_bytes := make([]u8, PublicA_bytes_size)
+	defer delete(PublicA_bytes)
+	big.int_to_bytes_little(ctx.PublicA, PublicA_bytes)
+
+	PublicB_bytes := make([]u8, PublicB_bytes_size)
+	defer delete(PublicB_bytes)
+	big.int_to_bytes_little(ctx.PublicB, PublicB_bytes)
+
+	hash_data := make([]u8, PublicA_bytes_size + PublicB_bytes_size + len(ctx.SessionKey))
+	defer delete(hash_data)
+	copy(hash_data[0:], PublicA_bytes)
+	copy(hash_data[PublicA_bytes_size:], PublicB_bytes)
+	copy(hash_data[PublicA_bytes_size + PublicB_bytes_size:], ctx.SessionKey)
+
+	M1 := hash.hash(.SHA256, hash_data)
+	defer delete(M1)
+
+    //Compare it against the hash the client sent
+
+    fmt.print("Server Hash: ")
+    common.PrintHexBytesLine(&M1)
+    fmt.print("Client Hash: ")
+    common.PrintHexBytesLine(&client_hash)
+
+    if (mem.compare(M1, client_hash) == 0) {
+        response := common.MessageHeader{
+            opcode = u16(common.MSG.SMSG_LOGIN_PROOF_OK),
+            length = size_of(common.MessageHeader),
+        }
+        packet := enet.packet_create(&response, size_of(common.MessageHeader), {.RELIABLE})
+        enet.peer_send(event.peer, 0, packet)
+        enet.host_flush(event.peer.host)
+    //     MySqlCommand cmd = new MySqlCommand(String.Format("UPDATE account SET sessionkey = '{1}', last_ip='{2}', last_login='{3}' WHERE username = '{0}'", sessionData.Account, Convert.ToBase64String(sessionData.SessionKey), session.RemoteEndPoint.Address, DateTime.Now.ToString("yyyy-MM-dd")), Program.db);
+    //     cmd.ExecuteNonQuery();
+
+    //     Console.WriteLine("[{0:yyyy-MM-dd HH\\:mm\\:ss}] [{1}:{2}] Auth success for user {3}. [session key = {4}]", DateTime.Now, session.RemoteEndPoint.Address, session.RemoteEndPoint.Port, sessionData.Account, Convert.ToBase64String(sessionData.SessionKey));
+    } else {
+        //Wrong pass
+    //     Console.WriteLine("[{0:yyyy-MM-dd HH\\:mm\\:ss}] [{1}:{2}] Wrong password for user {3}.", DateTime.Now, session.RemoteEndPoint.Address, session.RemoteEndPoint.Port, sessionData.Account);
+    //     var ds = UDPTransmitter.CreateObject();
+    //     ds.WriteUint16((UInt16)SMSG_AUTH_LOGON_PROOF_FAIL);
+    //     ds.WriteUint8((byte)AccountState.LOGIN_UNKNOWN_ACCOUNT);
+    //     ds.SendTo(data.ReceiveSocket, session.RemoteEndPoint);
+        response := common.MessageHeader{
+            opcode = u16(common.MSG.SMSG_LOGIN_PROOF_FAIL),
+            length = size_of(common.MessageHeader),
+        }
+        packet := enet.packet_create(&response, size_of(common.MessageHeader), {.RELIABLE})
+        enet.peer_send(event.peer, 0, packet)
+        enet.host_flush(event.peer.host)
+        enet.peer_disconnect_later(event.peer, 42)
+    }
 }
 
 do_migrations :: proc() -> (err: sqlite.Result_Code) {
@@ -273,21 +341,16 @@ start_server :: proc() {
 				event.peer.data = sessionData
 				srp6.InitContext(&sessionData.auth_context, srp6.grunt_SRP6_N, srp6.grunt_SRP6_g)
 			case .RECEIVE:
-                opcode := cast([^]u16)event.packet.data
-				data := event.packet.data[:event.packet.dataLength]
+                opcode := cast(^u16)event.packet.data
 
-				// value := cast(u32)data^
-				// values := raw_data(data[0:event.packet.dataLength - 1])
+				data := event.packet.data[:event.packet.dataLength]
 				fmt.println(event.packet.dataLength, " bytes received")
                 common.PrintHexBytesLine(&data)
-				// array := []u8{data[0], data[1], data[2]}
-				// data_len := event.packet.dataLength
 
-                if opcode[0] in opcodes {
-                    opcodes[opcode[0]].on_receive(&event)
+                if opcode^ in opcodes {
+                    opcodes[opcode^].on_receive(&event)
                 }
 
-                // fmt.println("Data received", array, "of size", data_len)
 				// enet.peer_disconnect(event.peer, 42)
             case .DISCONNECT:
 				fmt.println("Disconnection!")
